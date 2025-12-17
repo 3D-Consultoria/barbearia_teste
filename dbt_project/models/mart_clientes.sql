@@ -8,14 +8,14 @@ WITH source_data AS (
 cleaned_data AS (
     SELECT
         -- Tenta converter ID, se falhar usa nulo
-        TRY_CAST(ID AS INTEGER) as cliente_id,
+        TRY_CAST(id AS INTEGER) as cliente_id,
         
         -- CORREÇÃO AQUI: Usamos UPPER (Maiúsculo) pois DuckDB não tem INITCAP nativo
-        TRIM(UPPER(COALESCE(Nome, 'Cliente Desconhecido'))) as nome_cliente,
+        TRIM(UPPER(COALESCE(nome, 'Cliente Desconhecido'))) as nome_cliente,
         
         -- Tratamento de Data: Tenta converter DD/MM/YYYY
         -- O try_strptime retorna NULL se falhar, não quebrando o pipeline
-        try_strptime(Nascimento, '%d/%m/%Y')::DATE as data_nascimento_dt
+        try_strptime(data_nascimento, '%d/%m/%Y')::DATE as data_nascimento_dt
     FROM source_data
 )
 
