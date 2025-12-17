@@ -3,145 +3,139 @@ import yagmail
 import os
 from datetime import datetime
 from openai import OpenAI
+from notifications import send_telegram_alert
 
-# --- CONFIGURAÇÃO DO CLIENTE ---
 CONFIG_CLIENTE = {
     "nome_empresa": "Barbearia Teste",
-    "tipo_negocio": "Barbearia Clássica",
-    "foco_estrategico": "Fidelização e recorrência mensal.",
-    "tom_de_voz": "Profissional e motivador."
+    "tipo_negocio": "Barbearia",
+    "foco_estrategico": "Aumentar Ticket Médio e atrair bairros vizinhos.",
+    "tom_de_voz": "Analítico e Estratégico."
 }
 
-def get_ai_analysis(metricas):
-    """Agente de IA Consultor"""
+def get_ai_analysis(financas, top_bairro):
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key: return "IA indisponível."
 
     client = OpenAI(api_key=api_key)
 
     system_prompt = f"""
-    Você é um Consultor Estratégico da 3D Consultoria para a {CONFIG_CLIENTE['nome_empresa']}.
-    Foco: {CONFIG_CLIENTE['foco_estrategico']}
+    Você é o Consultor Financeiro da 3D Consultoria.
+    Analise os dados financeiros e geográficos da {CONFIG_CLIENTE['nome_empresa']}.
     
-    Analise os KPIs abaixo e dê 1 (UM) insight curto (máx 3 linhas) para o dono agir hoje.
-    """
-
-    user_prompt = f"""
-    MÉTRICAS DO DIA ({datetime.now().strftime('%d/%m/%Y')}):
-    - Total Clientes: {metricas['total']}
-    - Idade Média: {metricas['idade_media']} (Público principal: {metricas['faixa_principal']})
-    - Aniversariantes Mês: {metricas['aniversariantes']}
+    DADOS:
+    - Faturamento Total (Histórico): R$ {financas['faturamento']}
+    - Ticket Médio: R$ {financas['ticket_medio']}
+    - Serviço Carro-Chefe: {financas['top_servico']}
+    - Bairro que mais gasta: {top_bairro}
     
-    REGRA:
-    - Se houver aniversariantes, sugira ação para eles.
-    - Senão, foque na faixa etária predominante.
+    TAREFA:
+    Escreva um insight de 3 linhas. 
+    Se o ticket médio for baixo (< 40), sugira upsell (combo).
+    Se houver concentração em um bairro, sugira ads para bairros vizinhos.
     """
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": system_prompt},
-                      {"role": "user", "content": user_prompt}],
-            temperature=0.7, max_tokens=200
+            messages=[{"role": "system", "content": system_prompt}],
+            max_tokens=250
         )
         return response.choices[0].message.content
-    except Exception as e:
-        return "Sem análise hoje."
+    except:
+        return "Sem análise."
 
 def send_report():
-    print(">>> [3/3] Iniciando Report Inteligente (Via dbt Marts)...")
-    
-    # Conecta no banco já processado pelo dbt
+    print(">>> [3/3] Gerando Relatório Financeiro...")
     con = duckdb.connect(database='data/barbearia.duckdb', read_only=True)
     
-    # --- 1. Busca Métricas PRONTAS (SQL puro) ---
-    # Perceba como não tem mais lógica python complexa aqui
     try:
-        # Pega métricas agregadas numa única query rápida
-        kpi_query = """
-        SELECT 
-            COUNT(*) as total,
-            CAST(AVG(idade) AS INTEGER) as media_idade,
-            SUM(CASE WHEN is_aniversariante_mes THEN 1 ELSE 0 END) as total_aniversariantes,
-            MODE(faixa_etaria) as faixa_principal
-        FROM mart_clientes
+        # 1. Busca Dados Financeiros Gerais
+        df_fin = con.execute("SELECT * FROM mart_financeiro").df()
+        faturamento = df_fin['faturamento_total'].iloc[0] or 0
+        ticket_medio = df_fin['ticket_medio'].iloc[0] or 0
+        top_servico = df_fin['servico_mais_vendido'].iloc[0]
+
+        # 2. Busca Melhor Bairro (Geografia)
+        query_bairro = """
+            SELECT bairro, SUM(total_gasto_ltv) as total 
+            FROM mart_dashboard 
+            WHERE bairro IS NOT NULL
+            GROUP BY bairro 
+            ORDER BY total DESC LIMIT 1
         """
-        df_kpi = con.execute(kpi_query).df()
-        
-        # Pega lista de nomes simples
-        df_list = con.execute("SELECT nome_cliente FROM mart_clientes LIMIT 8").df()
-        
+        res_bairro = con.execute(query_bairro).fetchone()
+        top_bairro = res_bairro[0] if res_bairro else "Indefinido"
+
+        # 3. Lista de VIPs
+        df_vips = con.execute("SELECT nome, total_gasto_ltv, dias_desde_ultima_visita FROM mart_dashboard ORDER BY total_gasto_ltv DESC LIMIT 5").df()
+
     except Exception as e:
-        print(f"Erro ao ler tabela dbt (mart_clientes): {e}")
-        print("DICA: Rode 'dbt run' antes de executar esse script.")
-        return
+        send_telegram_alert(f"Erro ao ler dados do DuckDB: {e}", level="error")
+        raise e
 
-    # Prepara dados para IA
-    metricas = {
-        "total": int(df_kpi['total'].iloc[0]),
-        "idade_media": int(df_kpi['media_idade'].iloc[0]) if df_kpi['media_idade'].notna().all() else 0,
-        "aniversariantes": int(df_kpi['total_aniversariantes'].iloc[0]),
-        "faixa_principal": df_kpi['faixa_principal'].iloc[0]
+    # IA Analysis
+    metricas_ia = {
+        "faturamento": f"{faturamento:.2f}",
+        "ticket_medio": f"{ticket_medio:.2f}",
+        "top_servico": top_servico
     }
+    insight = get_ai_analysis(metricas_ia, top_bairro)
 
-    print(f"Dados Carregados do dbt: {metricas}")
-    insight_ia = get_ai_analysis(metricas)
-
-    # --- 2. Geração HTML ---
-    lista_html = ""
-    for nome in df_list['nome_cliente']:
-        lista_html += f"<li style='margin-bottom: 4px;'>{nome}</li>"
-
-    date_now = datetime.now().strftime('%d/%m/%Y')
-    
-    # Box de Destaque
-    stats_box = f"""
-    <div style="display: flex; gap: 10px; margin: 20px 0;">
-        <div style="background: #f8f9fa; padding: 15px; border: 1px solid #ddd; border-radius: 8px; flex: 1; text-align: center;">
-            <div style="font-size: 12px; color: #666; text-transform: uppercase;">Idade Média</div>
-            <div style="font-size: 24px; font-weight: bold; color: #333;">{metricas['idade_media']}</div>
-        </div>
-        <div style="background: #e8f5e9; padding: 15px; border: 1px solid #c8e6c9; border-radius: 8px; flex: 1; text-align: center;">
-            <div style="font-size: 12px; color: #2e7d32; text-transform: uppercase;">Aniversariantes</div>
-            <div style="font-size: 24px; font-weight: bold; color: #2e7d32;">{metricas['aniversariantes']}</div>
-        </div>
-    </div>
-    """
+    # --- HTML ---
+    lista_vips = ""
+    for index, row in df_vips.iterrows():
+        # Lógica de Churn: Se não vem há 30 dias, está 'Sumido'
+        status = "🔴 Sumido" if row['dias_desde_ultima_visita'] > 30 else "🟢 Ativo"
+        lista_vips += f"<li style='margin-bottom:5px;'><b>{row['nome']}</b>: R$ {row['total_gasto_ltv']:.2f} <span style='font-size:12px'>({status})</span></li>"
 
     html_body = f"""
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-        <div style="border-bottom: 2px solid #0056b3; padding-bottom: 10px; margin-bottom: 20px;">
-            <h2 style="margin: 0;">📊 Resumo: {CONFIG_CLIENTE['nome_empresa']}</h2>
-            <p style="margin: 5px 0 0; color: #777;">Data: {date_now}</p>
+    <div style="font-family: Arial, color: #333; max-width: 600px; border: 1px solid #eee; padding: 20px; border-radius: 8px;">
+        <h2 style="color: #0056b3; margin-top:0;">💰 Resumo Financeiro & CRM</h2>
+        <p style="color:#666; font-size:12px;">Data: {datetime.now().strftime('%d/%m/%Y')}</p>
+        <hr style="border:0; border-top:1px solid #eee;">
+        
+        <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+            <div style="background: #e8f5e9; padding: 15px; flex: 1; border-radius: 8px; text-align: center;">
+                <small style="color:#2e7d32; text-transform:uppercase;">Faturamento</small><br>
+                <strong style="font-size: 22px; color: #2e7d32;">R$ {faturamento:,.2f}</strong>
+            </div>
+            <div style="background: #e3f2fd; padding: 15px; flex: 1; border-radius: 8px; text-align: center;">
+                <small style="color:#1565c0; text-transform:uppercase;">Ticket Médio</small><br>
+                <strong style="font-size: 22px; color: #1565c0;">R$ {ticket_medio:,.2f}</strong>
+            </div>
+        </div>
+
+        <div style="background: #fff3cd; padding: 15px; border-radius: 8px; border: 1px solid #ffeeba; margin-bottom: 20px;">
+            <strong>🤖 Consultor 3D diz:</strong><br>
+            <i style="color:#555;">"{insight}"</i>
+        </div>
+
+        <h3 style="color: #333;">🏆 Clientes VIPs (Top 5)</h3>
+        <ul style="padding-left: 20px; color: #444;">{lista_vips}</ul>
+        
+        <div style="background: #f8f9fa; padding: 10px; border-radius: 5px; font-size: 14px;">
+            <b>📍 Top Bairro:</b> {top_bairro} <br>
+            <b>✂️ Top Serviço:</b> {top_servico}
         </div>
         
-        <p style="font-size: 18px;">Total de Clientes Ativos: <strong>{metricas['total']}</strong></p>
-        
-        {stats_box}
-
-        <div style="background-color: #f0f7ff; border-left: 5px solid #0056b3; padding: 15px; margin: 25px 0;">
-            <strong>🤖 Consultor Virtual:</strong>
-            <p style="margin-top: 5px; font-style: italic;">"{insight_ia}"</p>
-        </div>
-
-        <h3>Novos Cadastros:</h3>
-        <ul>{lista_html}</ul>
-        
-        <hr style="border: 0; border-top: 1px solid #eee; margin-top: 40px;">
-        <p style="text-align: center; font-size: 12px; color: #999;">3D Consultoria de Dados</p>
+        <p style="text-align: center; color: #999; font-size: 11px; margin-top: 20px;">Gerado por 3D Consultoria</p>
     </div>
     """
-
-    # --- 3. Envio ---
+    
+    # Envio
     sender = os.environ.get("EMAIL_USER")
     pwd = os.environ.get("EMAIL_PASS")
     
-    if sender and pwd:
-        yag = yagmail.SMTP(sender, pwd)
-        yag.send(to="leandro.lf.frazao@hotmail.com", subject=f"Resumo 3D: {date_now}", contents=[html_body])
-        print("Email enviado!")
+    if sender:
+        try:
+            yag = yagmail.SMTP(sender, pwd)
+            yag.send(to="leandro.lf.frazao@hotmail.com", subject=f"Relatório Financeiro - {datetime.now().strftime('%d/%m')}", contents=[html_body])
+            print("Relatório enviado!")
+        except Exception as e:
+            send_telegram_alert(f"Erro ao enviar E-mail: {e}", level="error")
+            raise e
     else:
-        print("Erro: Credenciais de email não configuradas.")
+        print("Credenciais de e-mail não configuradas.")
 
 if __name__ == "__main__":
     send_report()

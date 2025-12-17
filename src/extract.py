@@ -1,32 +1,46 @@
 import pandas as pd
 import os
+from notifications import send_telegram_alert
 
-# ID da planilha fornecida
-SHEET_ID = "1f655JLEQiOxSB0uKFRv9Ds9-00rAVNP2qTfeXRbSgq4"
-# Exporta a primeira aba como CSV
-URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
+# --- CONFIGURAÇÃO DAS URLS ---
+# IMPORTANTE: Pegue o link de exportação de cada aba da sua planilha.
+# Geralmente muda o 'gid=' no final da URL.
+# Exemplo: ".../export?format=csv&gid=0" (Aba 1)
+# Exemplo: ".../export?format=csv&gid=12345" (Aba 2)
+
+URL_CLIENTES = "COLOQUE_AQUI_O_LINK_CSV_DA_ABA_CLIENTES" 
+URL_VENDAS = "COLOQUE_AQUI_O_LINK_CSV_DA_ABA_VENDAS"
 
 def run_extraction():
-    print(">>> [1/3] Iniciando extração do Google Sheets...")
+    print(">>> [1/3] Iniciando extração de Tabelas...")
+    os.makedirs("data", exist_ok=True)
     
-    try:
-        # Lê a planilha direto da URL
-        df = pd.read_csv(URL)
-        
-        # Cria pasta de dados se não existir
-        os.makedirs("data", exist_ok=True)
-        
-        # Salva como raw_data.csv para o dbt consumir
-        output_path = "data/raw_customers.csv"
-        df.to_csv(output_path, index=False)
-        
-        print(f"Sucesso! {len(df)} linhas extraídas.")
-        print(f"Arquivo salvo em: {output_path}")
-        print("Colunas:", df.columns.tolist())
-        
-    except Exception as e:
-        print(f"Erro na extração: {e}")
-        raise e
+    files = {
+        "raw_clientes.csv": URL_CLIENTES,
+        "raw_vendas.csv": URL_VENDAS
+    }
+
+    for filename, url in files.items():
+        try:
+            # Verifica se o link foi configurado
+            if "COLOQUE_AQUI" in url:
+                raise Exception(f"URL para {filename} não configurada no script!")
+
+            print(f"Baixando {filename}...")
+            df = pd.read_csv(url)
+            
+            if len(df) == 0:
+                send_telegram_alert(f"⚠️ Arquivo {filename} veio VAZIO!", level="warning")
+            
+            output_path = f"data/{filename}"
+            df.to_csv(output_path, index=False)
+            print(f"✅ {filename} salvo com {len(df)} linhas.")
+            
+        except Exception as e:
+            msg_erro = f"🚨 Falha ao baixar {filename}: {str(e)}"
+            print(msg_erro)
+            send_telegram_alert(msg_erro, level="error")
+            raise e
 
 if __name__ == "__main__":
     run_extraction()

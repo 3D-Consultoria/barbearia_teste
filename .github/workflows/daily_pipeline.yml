@@ -1,27 +1,31 @@
 name: Pipeline Diário - Barbearia
 
 on:
-  workflow_dispatch: # Permite rodar manualmente
+  workflow_dispatch:
   schedule:
-    - cron: '0 11 * * *' # Roda todo dia as 08:00 AM
+    - cron: '0 11 * * *'
 
 jobs:
   run_pipeline:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout do código
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Instalar Python
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
 
-      - name: Instalar dependências
+      - name: Install
         run: pip install -r requirements.txt
 
-      - name: 1. Extração (Sheets)
+      - name: 1. Extração (Múltiplas Tabelas)
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_TOPIC_ID: "SEU_NUMERO_DO_TOPICO"
         run: python src/extract.py
 
       - name: 2. Transformação (dbt)
@@ -29,9 +33,26 @@ jobs:
           cd dbt_project
           dbt run --profiles-dir .
 
-      - name: 3. Envio de Relatório e IA
+      - name: 3. Report Financeiro e IA
         env:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_TOPIC_ID: "SEU_NUMERO_DO_TOPICO"
         run: python src/send_email.py
+
+      # Notificação de Falha Crítica
+      - name: 🚨 Notificar Falha de Pipeline
+        if: failure()
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_TOPIC_ID: "SEU_NUMERO_DO_TOPICO"
+        run: |
+          curl -X POST https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage \
+          -d chat_id=$TELEGRAM_CHAT_ID \
+          -d message_thread_id=$TELEGRAM_TOPIC_ID \
+          -d text="🚨 *CRITICAL ERROR*: O Pipeline FALHOU no GitHub Actions! Verifique os logs." \
+          -d parse_mode="Markdown"

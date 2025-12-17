@@ -2,4 +2,6 @@ pandas
 dbt-duckdb
 duckdb
 yagmail
+openpyxl
 openai
+requests
