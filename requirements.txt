@@ -2,3 +2,4 @@ pandas
 dbt-duckdb
 duckdb
 yagmail
+openai
