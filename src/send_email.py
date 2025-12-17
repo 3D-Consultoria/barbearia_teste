@@ -9,50 +9,71 @@ def send_report():
     # 1. Conecta no banco
     con = duckdb.connect(database='data/barbearia.duckdb', read_only=True)
     
-    # 2. Busca os dados (Count e Nomes)
+    # 2. Busca os dados
     try:
-        # Pega a contagem total
-        df_count = con.execute("SELECT COUNT(*) as total FROM mart_clientes").df()
-        qtd_clientes = df_count['total'].iloc[0]
-        
-        # Pega os nomes dos clientes (Limitado a 50 para não estourar o email)
-        # Ajuste 'nome' para o nome exato da coluna na sua planilha, se for diferente (ex: 'Name', 'Cliente')
-        df_names = con.execute("SELECT * FROM mart_clientes LIMIT 50").df()
-        
+        # Tenta ler da tabela mart, se falhar lê do CSV
+        query_check = "SELECT * FROM mart_clientes LIMIT 1"
+        con.execute(query_check)
+        table_name = "mart_clientes"
     except Exception:
-        print("Tabela mart_clientes não encontrada, lendo do CSV raw.")
-        df_count = con.execute("SELECT COUNT(*) as total FROM read_csv_auto('data/raw_customers.csv')").df()
-        qtd_clientes = df_count['total'].iloc[0]
-        df_names = con.execute("SELECT * FROM read_csv_auto('data/raw_customers.csv') LIMIT 50").df()
+        print("Aviso: Tabela 'mart_clientes' não encontrada. Usando 'raw_customers.csv'.")
+        table_name = "read_csv_auto('data/raw_customers.csv')"
 
-    # 3. Monta a lista de nomes em HTML (<ul><li>Nome</li></ul>)
-    # Assume que a primeira coluna é o nome, ou busca coluna especifica
-    coluna_nome = df_names.columns[0] # Pega a primeira coluna disponível
+    # Pega Contagem
+    df_count = con.execute(f"SELECT COUNT(*) as total FROM {table_name}").df()
+    qtd_clientes = df_count['total'].iloc[0]
+    
+    # Pega Nomes (Tenta achar a coluna de nome automaticamente)
+    df_sample = con.execute(f"SELECT * FROM {table_name} LIMIT 50").df()
+    
+    # Lógica para achar a coluna de Nome (procura por 'nome', 'name', 'cliente' ou pega a segunda coluna)
+    coluna_alvo = df_sample.columns[0] # Padrão: primeira coluna
+    
+    # Se tiver mais de 1 coluna, geralmente o ID é a primeira e o Nome a segunda
+    if len(df_sample.columns) > 1:
+        coluna_alvo = df_sample.columns[1]
+        
+    # Tenta achar nome específico
+    for col in df_sample.columns:
+        if 'nome' in col.lower() or 'name' in col.lower() or 'cliente' in col.lower():
+            coluna_alvo = col
+            break
+            
+    print(f"Coluna selecionada para exibição: {coluna_alvo}")
+
+    # 3. Monta a lista HTML
     lista_nomes_html = ""
-    for nome in df_names[coluna_nome]:
-        lista_nomes_html += f"<li>{nome}</li>"
+    for nome in df_sample[coluna_alvo]:
+        lista_nomes_html += f"<li style='margin-bottom: 5px;'>{str(nome).title()}</li>"
 
-    # 4. Configura o E-mail
+    # 4. Configura o E-mail com ESTILO FORÇADO (Fundo Branco, Letra Preta)
     sender_email = os.environ.get("EMAIL_USER")
     sender_password = os.environ.get("EMAIL_PASS")
     receiver_email = "leandro.lf.frazao@hotmail.com"
     date_now = datetime.now().strftime('%d/%m/%Y')
 
-    # --- AQUI ESTÁ A CORREÇÃO QUE VOCÊ PEDIU ---
-    
-    # O Assunto agora é a Data
     subject = f"Resumo da Barbearia - {date_now}"
     
-    # O Corpo agora tem os DADOS
-    contents = [
-        f"<h2>Olá! Segue o resumo de hoje ({date_now}):</h2>",
-        "<hr>",
-        f"<p style='font-size: 16px;'>Total de Clientes na Base: <strong>{qtd_clientes}</strong></p>",
-        "<h3>Lista de Clientes Recentes:</h3>",
-        f"<ul>{lista_nomes_html}</ul>", # Insere a lista formatada
-        "<br>",
-        "<p><i>Enviado automaticamente por 3D Consultoria</i></p>"
-    ]
+    # HTML Blindado: Usamos uma DIV branca para garantir que o texto apareça
+    html_body = f"""
+    <div style="background-color: #ffffff; color: #000000; padding: 20px; font-family: Arial, sans-serif;">
+        <h2 style="color: #333333;">Olá! Segue o resumo de hoje ({date_now}):</h2>
+        <hr style="border: 1px solid #cccccc;">
+        
+        <p style="font-size: 18px; color: #000000;">
+            Total de Clientes na Base: <strong style="color: #007bff; font-size: 22px;">{qtd_clientes}</strong>
+        </p>
+        
+        <h3 style="color: #333333; margin-top: 20px;">Lista de Clientes Recentes:</h3>
+        <ul style="color: #000000;">
+            {lista_nomes_html}
+        </ul>
+        
+        <br>
+        <hr style="border: 0; border-top: 1px solid #eee;">
+        <p style="color: #666666; font-size: 12px;"><i>Enviado automaticamente por 3D Consultoria</i></p>
+    </div>
+    """
     
     # 5. Envia
     if not sender_email or not sender_password:
@@ -61,12 +82,13 @@ def send_report():
 
     try:
         yag = yagmail.SMTP(sender_email, sender_password)
+        # Passamos o body como uma lista contendo a string única
         yag.send(
             to=receiver_email,
             subject=subject,
-            contents=contents
+            contents=[html_body] 
         )
-        print(f"Relatório enviado! Assunto: {subject}")
+        print(f"Relatório enviado com sucesso! Total: {qtd_clientes}")
     except Exception as e:
         print(f"Erro ao enviar: {e}")
         raise e
