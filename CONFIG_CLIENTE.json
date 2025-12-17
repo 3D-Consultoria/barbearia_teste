@@ -1,0 +1,6 @@
+CONFIG_CLIENTE = {
+    "nome_empresa": "Confeitaria da Ana",
+    "tipo_negocio": "Venda de Bolos e Doces",
+    "foco_estrategico": "Evitar desperdício e vender estoque do dia.",
+    "tom_de_voz": "Doce e acolhedor."
+}
