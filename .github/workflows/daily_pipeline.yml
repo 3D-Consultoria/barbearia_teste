@@ -3,7 +3,7 @@ name: Pipeline Diário - Barbearia
 on:
   workflow_dispatch: # Permite rodar manualmente
   schedule:
-    - cron: '0 11 * * *' # Roda todo dia às 08:00 AM (Horário de Brasília aprox. UTC-3)
+    - cron: '0 11 * * *' # Roda todo dia as 08:00 AM
 
 jobs:
   run_pipeline:
@@ -28,10 +28,10 @@ jobs:
         run: |
           cd dbt_project
           dbt run --profiles-dir .
-          # Opcional: dbt test --profiles-dir .
 
-      - name: 3. Envio de Relatório
+      - name: 3. Envio de Relatório e IA
         env:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python src/send_email.py
