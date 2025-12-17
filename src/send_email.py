@@ -6,45 +6,57 @@ from datetime import datetime
 def send_report():
     print(">>> [3/3] Iniciando geração de métricas e envio de e-mail...")
     
-    # 1. Conecta no banco de dados (modo leitura)
+    # 1. Conecta no banco
     con = duckdb.connect(database='data/barbearia.duckdb', read_only=True)
     
-    # 2. Executa a query de contagem (SQL)
-    # Verifica se a tabela existe, senão lê do CSV para evitar erro no primeiro run
+    # 2. Busca os dados (Count e Nomes)
     try:
-        query = "SELECT COUNT(*) as total FROM mart_clientes"
-        df = con.execute(query).df()
-    except Exception:
-        print("Tabela mart_clientes não encontrada no banco, lendo do CSV raw.")
-        df = con.execute("SELECT COUNT(*) as total FROM read_csv_auto('data/raw_customers.csv')").df()
+        # Pega a contagem total
+        df_count = con.execute("SELECT COUNT(*) as total FROM mart_clientes").df()
+        qtd_clientes = df_count['total'].iloc[0]
         
-    # Pega o valor único da contagem
-    qtd_clientes = df['total'].iloc[0]
-    print(f"Contagem obtida: {qtd_clientes}")
+        # Pega os nomes dos clientes (Limitado a 50 para não estourar o email)
+        # Ajuste 'nome' para o nome exato da coluna na sua planilha, se for diferente (ex: 'Name', 'Cliente')
+        df_names = con.execute("SELECT * FROM mart_clientes LIMIT 50").df()
+        
+    except Exception:
+        print("Tabela mart_clientes não encontrada, lendo do CSV raw.")
+        df_count = con.execute("SELECT COUNT(*) as total FROM read_csv_auto('data/raw_customers.csv')").df()
+        qtd_clientes = df_count['total'].iloc[0]
+        df_names = con.execute("SELECT * FROM read_csv_auto('data/raw_customers.csv') LIMIT 50").df()
 
-    # 3. Prepara o conteúdo do e-mail (Texto simples, sem tabelas complexas)
+    # 3. Monta a lista de nomes em HTML (<ul><li>Nome</li></ul>)
+    # Assume que a primeira coluna é o nome, ou busca coluna especifica
+    coluna_nome = df_names.columns[0] # Pega a primeira coluna disponível
+    lista_nomes_html = ""
+    for nome in df_names[coluna_nome]:
+        lista_nomes_html += f"<li>{nome}</li>"
+
+    # 4. Configura o E-mail
     sender_email = os.environ.get("EMAIL_USER")
     sender_password = os.environ.get("EMAIL_PASS")
     receiver_email = "leandro.lf.frazao@hotmail.com"
-    
     date_now = datetime.now().strftime('%d/%m/%Y')
+
+    # --- AQUI ESTÁ A CORREÇÃO QUE VOCÊ PEDIU ---
     
-    # Corpo do email usando HTML básico que funciona em qualquer lugar
-    subject = f"Resumo Diário: {qtd_clientes} Clientes"
+    # O Assunto agora é a Data
+    subject = f"Resumo da Barbearia - {date_now}"
     
+    # O Corpo agora tem os DADOS
     contents = [
-        f"<h2>Resumo da Barbearia - {date_now}</h2>",
+        f"<h2>Olá! Segue o resumo de hoje ({date_now}):</h2>",
         "<hr>",
-        f"<p>Olá! Até o momento, temos a seguinte métrica:</p>",
-        f"<h1>{qtd_clientes}</h1>",
-        "<p><strong>Clientes Cadastrados na Base</strong></p>",
+        f"<p style='font-size: 16px;'>Total de Clientes na Base: <strong>{qtd_clientes}</strong></p>",
+        "<h3>Lista de Clientes Recentes:</h3>",
+        f"<ul>{lista_nomes_html}</ul>", # Insere a lista formatada
         "<br>",
-        "<p><i>Relatório automático - 3D Consultoria</i></p>"
+        "<p><i>Enviado automaticamente por 3D Consultoria</i></p>"
     ]
     
-    # 4. Envia
+    # 5. Envia
     if not sender_email or not sender_password:
-        print("ERRO: Credenciais de e-mail não configuradas.")
+        print("ERRO: Credenciais não configuradas.")
         return
 
     try:
@@ -54,7 +66,7 @@ def send_report():
             subject=subject,
             contents=contents
         )
-        print("Relatório enviado com sucesso!")
+        print(f"Relatório enviado! Assunto: {subject}")
     except Exception as e:
         print(f"Erro ao enviar: {e}")
         raise e
