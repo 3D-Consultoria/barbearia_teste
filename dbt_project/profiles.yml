@@ -1,0 +1,7 @@
+barbearia_teste:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: '../data/barbearia.duckdb'
+      threads: 1
