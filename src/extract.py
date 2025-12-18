@@ -16,18 +16,30 @@ GID_VENDAS = "48884415"
 URL_VENDAS = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_VENDAS}"
 
 def run_pipeline():
-    print(">>> [1/4] Iniciando Ingestão para Data Lake (MotherDuck)...")
+    print(">>> [1/4] Iniciando Ingestão e Infraestrutura...")
     
     token = os.environ.get("MOTHERDUCK_TOKEN")
     if not token:
         raise Exception("MOTHERDUCK_TOKEN não configurado!")
 
-    # Conecta no MotherDuck e seleciona o banco
     con = duckdb.connect(f'md:?token={token}')
-    print("Verificando banco de dados...")
+    
+    # 1. Garante o Banco
     con.execute("CREATE DATABASE IF NOT EXISTS barbearia_db")
     con.execute("USE barbearia_db")
+
+    # 2. Garante a Tabela de MEMÓRIA DA IA (Novidade!)
+    print("Verificando tabela de histórico da IA...")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS historico_ia (
+            data_referencia DATE,
+            insight_gerado VARCHAR,
+            metricas_json VARCHAR,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     
+    # 3. Carrega Dados (Load)
     files = {
         "raw_clientes": URL_CLIENTES,
         "raw_vendas": URL_VENDAS
@@ -35,24 +47,20 @@ def run_pipeline():
 
     for table_name, url in files.items():
         try:
-            print(f"Baixando {table_name}...")
-            # on_bad_lines='warn' evita travar com linhas sujas
+            print(f"Processando {table_name}...")
             df = pd.read_csv(url, on_bad_lines='warn')
             
-            # Verificação de Segurança: Se baixou HTML por engano, vai ter coluna '<!DOCTYPE'
             if len(df.columns) > 0 and "<!DOCTYPE" in str(df.columns[0]):
-                raise Exception("ERRO CRÍTICO: O link configurado baixou um SITE (HTML) e não um CSV. Verifique o link de exportação.")
+                raise Exception("ERRO: Link baixou HTML. Verifique o GID.")
 
             if len(df) == 0:
-                send_telegram_alert(f"⚠️ {table_name} veio vazio!", level="warning")
+                send_telegram_alert(f"⚠️ {table_name} vazio!", level="warning")
 
             con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM df")
-            print(f"✅ {table_name} carregada ({len(df)} linhas).")
+            print(f"✅ {table_name}: {len(df)} linhas.")
             
         except Exception as e:
-            msg = f"🚨 Falha no Load de {table_name}: {e}"
-            print(msg)
-            send_telegram_alert(msg, level="error")
+            send_telegram_alert(f"Erro no {table_name}: {e}", level="error")
             raise e
 
 if __name__ == "__main__":
