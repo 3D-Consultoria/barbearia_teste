@@ -3,5 +3,7 @@ barbearia_teste:
   outputs:
     dev:
       type: duckdb
-      path: '../data/barbearia.duckdb'
+      # O prefixo 'md:' avisa que é MotherDuck
+      # 'my_db' será o nome do banco lá na nuvem
+      path: 'md:barbearia_db?token={{ env_var("MOTHERDUCK_TOKEN") }}' 
       threads: 1

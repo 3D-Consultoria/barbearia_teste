@@ -21,26 +21,28 @@ jobs:
       - name: Install
         run: pip install -r requirements.txt
 
-      - name: 1. Extração (Múltiplas Tabelas)
+      - name: 1. Extração e Load (MotherDuck)
         env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }} # Nova secret
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TELEGRAM_TOPIC_ID: "SEU_NUMERO_DO_TOPICO"
+          TELEGRAM_TOPIC_ID: "SEU_ID"
         run: python src/extract.py
 
-      - name: 2. Transformação (dbt)
+      - name: 2. Transformação (dbt Cloud)
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }} # Dbt precisa para conectar
         run: |
           cd dbt_project
           dbt run --profiles-dir .
 
       - name: 3. Report Financeiro e IA
         env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }} # Python precisa para ler
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TELEGRAM_TOPIC_ID: "SEU_NUMERO_DO_TOPICO"
+          # ... telegram vars ...
         run: python src/send_email.py
 
       # Notificação de Falha Crítica

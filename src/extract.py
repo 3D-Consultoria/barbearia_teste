@@ -1,46 +1,47 @@
 import pandas as pd
+import duckdb
 import os
 from notifications import send_telegram_alert
 
-# --- CONFIGURAÇÃO DAS URLS ---
-# IMPORTANTE: Pegue o link de exportação de cada aba da sua planilha.
-# Geralmente muda o 'gid=' no final da URL.
-# Exemplo: ".../export?format=csv&gid=0" (Aba 1)
-# Exemplo: ".../export?format=csv&gid=12345" (Aba 2)
+# --- CONFIGURAÇÃO ---
+URL_CLIENTES = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTSbvYHhT0lnjkj6RCzVDslOtj6Vlt9A7QwbHV4hKlpKTNFw0OQzy6vT08ABMxb2301AwfE3RbzpR5Y/pubhtml?gid=0&single=true" 
+URL_VENDAS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTSbvYHhT0lnjkj6RCzVDslOtj6Vlt9A7QwbHV4hKlpKTNFw0OQzy6vT08ABMxb2301AwfE3RbzpR5Y/pubhtml?gid=48884415&single=true"
 
-URL_CLIENTES = "COLOQUE_AQUI_O_LINK_CSV_DA_ABA_CLIENTES" 
-URL_VENDAS = "COLOQUE_AQUI_O_LINK_CSV_DA_ABA_VENDAS"
+def run_pipeline():
+    print(">>> [1/4] Iniciando Ingestão para Data Lake (MotherDuck)...")
+    
+    # Pega o Token
+    token = os.environ.get("MOTHERDUCK_TOKEN")
+    if not token:
+        raise Exception("MOTHERDUCK_TOKEN não configurado!")
 
-def run_extraction():
-    print(">>> [1/3] Iniciando extração de Tabelas...")
-    os.makedirs("data", exist_ok=True)
+    # Conecta direto na nuvem
+    con = duckdb.connect(f'md:barbearia_db?token={token}')
     
     files = {
-        "raw_clientes.csv": URL_CLIENTES,
-        "raw_vendas.csv": URL_VENDAS
+        "raw_clientes": URL_CLIENTES,
+        "raw_vendas": URL_VENDAS
     }
 
-    for filename, url in files.items():
+    for table_name, url in files.items():
         try:
-            # Verifica se o link foi configurado
-            if "COLOQUE_AQUI" in url:
-                raise Exception(f"URL para {filename} não configurada no script!")
-
-            print(f"Baixando {filename}...")
+            print(f"Baixando e enviando {table_name}...")
+            
+            # 1. Lê o CSV com Pandas (Extração)
             df = pd.read_csv(url)
             
             if len(df) == 0:
-                send_telegram_alert(f"⚠️ Arquivo {filename} veio VAZIO!", level="warning")
+                send_telegram_alert(f"⚠️ {table_name} veio vazio!", level="warning")
+
+            # 2. Carrega para o MotherDuck (Load)
+            # Cria a tabela se não existir, ou substitui
+            con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM df")
             
-            output_path = f"data/{filename}"
-            df.to_csv(output_path, index=False)
-            print(f"✅ {filename} salvo com {len(df)} linhas.")
+            print(f"✅ {table_name} carregada na nuvem ({len(df)} linhas).")
             
         except Exception as e:
-            msg_erro = f"🚨 Falha ao baixar {filename}: {str(e)}"
-            print(msg_erro)
-            send_telegram_alert(msg_erro, level="error")
+            send_telegram_alert(f"🚨 Falha no Load de {table_name}: {e}", level="error")
             raise e
 
 if __name__ == "__main__":
-    run_extraction()
+    run_pipeline()

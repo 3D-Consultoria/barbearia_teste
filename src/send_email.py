@@ -45,8 +45,11 @@ def get_ai_analysis(financas, top_bairro):
         return "Sem análise."
 
 def send_report():
-    print(">>> [3/3] Gerando Relatório Financeiro...")
-    con = duckdb.connect(database='data/barbearia.duckdb', read_only=True)
+    print(">>> [3/3] Conectando ao MotherDuck para Relatório...")
+    
+    token = os.environ.get("MOTHERDUCK_TOKEN")
+    # Conecta na nuvem (ReadOnly é ignorado no MotherDuck mas mantemos padrão)
+    con = duckdb.connect(f'md:barbearia_db?token={token}')
     
     try:
         # 1. Busca Dados Financeiros Gerais
