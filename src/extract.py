@@ -15,8 +15,7 @@ def run_pipeline():
     if not token:
         raise Exception("MOTHERDUCK_TOKEN não configurado!")
 
-    # CORREÇÃO AQUI:
-    # 1. Conecta na raiz do MotherDuck (sem especificar banco que não existe)
+    # 1. Conecta na raiz do MotherDuck
     con = duckdb.connect(f'md:?token={token}')
     
     # 2. Garante que o banco de dados existe
@@ -35,19 +34,19 @@ def run_pipeline():
         try:
             print(f"Baixando e enviando {table_name}...")
             
-            # Validação simples de URL
             if "LINK_CSV" in url:
                 print(f"⚠️ PULA {table_name}: URL não configurada no código.")
                 continue
 
-            # 1. Lê o CSV com Pandas (Extração)
-            df = pd.read_csv(url)
+            # --- CORREÇÃO AQUI ---
+            # on_bad_lines='warn': Se a linha tiver colunas a mais (sujeira), 
+            # ele pula a linha, avisa no log, mas NÃO quebra o pipeline.
+            df = pd.read_csv(url, on_bad_lines='warn')
             
             if len(df) == 0:
                 send_telegram_alert(f"⚠️ {table_name} veio vazio!", level="warning")
 
-            # 2. Carrega para o MotherDuck (Load)
-            # Como já demos "USE barbearia_db", a tabela vai pro lugar certo
+            # Load para MotherDuck
             con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM df")
             
             print(f"✅ {table_name} carregada na nuvem ({len(df)} linhas).")
