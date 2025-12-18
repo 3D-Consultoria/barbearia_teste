@@ -18,19 +18,14 @@ URL_VENDAS = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=c
 def run_pipeline():
     print(">>> [1/4] Iniciando Ingestão para Data Lake (MotherDuck)...")
     
-    # Pega o Token
     token = os.environ.get("MOTHERDUCK_TOKEN")
     if not token:
         raise Exception("MOTHERDUCK_TOKEN não configurado!")
 
-    # 1. Conecta na raiz do MotherDuck
+    # Conecta no MotherDuck e seleciona o banco
     con = duckdb.connect(f'md:?token={token}')
-    
-    # 2. Garante que o banco de dados existe
-    print("Verificando/Criando banco de dados 'barbearia_db'...")
+    print("Verificando banco de dados...")
     con.execute("CREATE DATABASE IF NOT EXISTS barbearia_db")
-    
-    # 3. Entra no banco correto
     con.execute("USE barbearia_db")
     
     files = {
@@ -40,24 +35,19 @@ def run_pipeline():
 
     for table_name, url in files.items():
         try:
-            print(f"Baixando e enviando {table_name}...")
-            
-            if "LINK_CSV" in url:
-                print(f"⚠️ PULA {table_name}: URL não configurada no código.")
-                continue
-
-            # --- CORREÇÃO AQUI ---
-            # on_bad_lines='warn': Se a linha tiver colunas a mais (sujeira), 
-            # ele pula a linha, avisa no log, mas NÃO quebra o pipeline.
+            print(f"Baixando {table_name}...")
+            # on_bad_lines='warn' evita travar com linhas sujas
             df = pd.read_csv(url, on_bad_lines='warn')
             
+            # Verificação de Segurança: Se baixou HTML por engano, vai ter coluna '<!DOCTYPE'
+            if len(df.columns) > 0 and "<!DOCTYPE" in str(df.columns[0]):
+                raise Exception("ERRO CRÍTICO: O link configurado baixou um SITE (HTML) e não um CSV. Verifique o link de exportação.")
+
             if len(df) == 0:
                 send_telegram_alert(f"⚠️ {table_name} veio vazio!", level="warning")
 
-            # Load para MotherDuck
             con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM df")
-            
-            print(f"✅ {table_name} carregada na nuvem ({len(df)} linhas).")
+            print(f"✅ {table_name} carregada ({len(df)} linhas).")
             
         except Exception as e:
             msg = f"🚨 Falha no Load de {table_name}: {e}"
