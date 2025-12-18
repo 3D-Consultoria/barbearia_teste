@@ -4,8 +4,16 @@ import os
 from notifications import send_telegram_alert
 
 # --- CONFIGURAÇÃO ---
-URL_CLIENTES = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTSbvYHhT0lnjkj6RCzVDslOtj6Vlt9A7QwbHV4hKlpKTNFw0OQzy6vT08ABMxb2301AwfE3RbzpR5Y/pubhtml?gid=0&single=true" 
-URL_VENDAS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTSbvYHhT0lnjkj6RCzVDslOtj6Vlt9A7QwbHV4hKlpKTNFw0OQzy6vT08ABMxb2301AwfE3RbzpR5Y/pubhtml?gid=48884415&single=true"
+# O ID GERAL DA PLANILHA
+SHEET_ID = "1f655JLEQiOxSB0uKFRv9Ds9-00rAVNP2qTfeXRbSgq4"
+
+# Aba Clientes (Geralmente gid=0 se for a primeira, mas confira!)
+URL_CLIENTES = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
+
+# Aba Vendas (VOCÊ PRECISA PEGAR O NÚMERO DO GID NO SEU NAVEGADOR)
+# Exemplo: se na URL estiver #gid=987654321, coloque esse número abaixo
+GID_VENDAS = "48884415" 
+URL_VENDAS = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_VENDAS}"
 
 def run_pipeline():
     print(">>> [1/4] Iniciando Ingestão para Data Lake (MotherDuck)...")
