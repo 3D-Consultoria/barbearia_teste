@@ -15,8 +15,16 @@ def run_pipeline():
     if not token:
         raise Exception("MOTHERDUCK_TOKEN não configurado!")
 
-    # Conecta direto na nuvem
-    con = duckdb.connect(f'md:barbearia_db?token={token}')
+    # CORREÇÃO AQUI:
+    # 1. Conecta na raiz do MotherDuck (sem especificar banco que não existe)
+    con = duckdb.connect(f'md:?token={token}')
+    
+    # 2. Garante que o banco de dados existe
+    print("Verificando/Criando banco de dados 'barbearia_db'...")
+    con.execute("CREATE DATABASE IF NOT EXISTS barbearia_db")
+    
+    # 3. Entra no banco correto
+    con.execute("USE barbearia_db")
     
     files = {
         "raw_clientes": URL_CLIENTES,
@@ -27,6 +35,11 @@ def run_pipeline():
         try:
             print(f"Baixando e enviando {table_name}...")
             
+            # Validação simples de URL
+            if "LINK_CSV" in url:
+                print(f"⚠️ PULA {table_name}: URL não configurada no código.")
+                continue
+
             # 1. Lê o CSV com Pandas (Extração)
             df = pd.read_csv(url)
             
@@ -34,13 +47,15 @@ def run_pipeline():
                 send_telegram_alert(f"⚠️ {table_name} veio vazio!", level="warning")
 
             # 2. Carrega para o MotherDuck (Load)
-            # Cria a tabela se não existir, ou substitui
+            # Como já demos "USE barbearia_db", a tabela vai pro lugar certo
             con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM df")
             
             print(f"✅ {table_name} carregada na nuvem ({len(df)} linhas).")
             
         except Exception as e:
-            send_telegram_alert(f"🚨 Falha no Load de {table_name}: {e}", level="error")
+            msg = f"🚨 Falha no Load de {table_name}: {e}"
+            print(msg)
+            send_telegram_alert(msg, level="error")
             raise e
 
 if __name__ == "__main__":
