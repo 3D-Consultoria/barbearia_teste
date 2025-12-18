@@ -7,17 +7,19 @@ Um pipeline automatizado de análise de dados que extrai informações de client
 ## 🏗️ Arquitetura
 
 ```
-Google Sheets (Fonte) 
+Google Sheets (Clientes + Vendas)
     ↓
-Extract (Python) 
+Extract (Python + DuckDB)
     ↓
-CSV Raw (data/raw_customers.csv)
+MotherDuck Database (raw_clientes, raw_vendas)
     ↓
-DBT Transformations (DuckDB)
+DBT Transformations (stg_* → mart_*)
     ↓
-Data Mart (mart_clientes)
+Data Marts (Clientes, Vendas, Financeiro, Dashboard)
     ↓
-OpenAI + Email (Distribuição)
+OpenAI + Email (Relatório + Distribuição)
+    ↓
+GitHub Actions (Daily Pipeline)
 ```
 
 ---
@@ -26,11 +28,12 @@ OpenAI + Email (Distribuição)
 
 | Camada | Ferramenta | Função |
 |--------|-----------|--------|
-| **Ingestão** | Python + Pandas | Extração de dados |
-| **Transformação** | DBT + DuckDB | Limpeza e cálculo de métricas |
-| **Armazenamento** | DuckDB | Banco de dados em memória/arquivo |
+| **Ingestão** | Python + Pandas + DuckDB | Extração e load de dados |
+| **Cloud Data** | MotherDuck | Data warehouse serverless |
+| **Transformação** | DBT | Limpeza, staging e data marts |
 | **IA/Análise** | OpenAI (GPT-4o-mini) | Geração de insights |
 | **Distribuição** | Yagmail | Envio de emails |
+| **Orquestração** | GitHub Actions | Pipeline automatizada (daily) |
 
 ---
 
@@ -38,23 +41,28 @@ OpenAI + Email (Distribuição)
 
 ```
 .
-├── CONFIG_CLIENTE.json              # Configuração do cliente (não versione dados sensíveis)
+├── CONFIG_CLIENTE.json              # Configuração do cliente
 ├── CLIENTE.md                        # Guia de cliente e customização
 ├── README.md                         # Este arquivo (arquitetura técnica)
 ├── requirements.txt                 # Dependências Python
 │
+├── .github/
+│   └── workflows/
+│       └── daily_pipeline.yml        # CI/CD - Pipeline automatizado (GitHub Actions)
+│
 ├── dbt_project/                      # Transformação de dados (DBT)
 │   ├── dbt_project.yml               # Configuração DBT
-│   ├── profiles.yml                  # Credenciais e conexões
+│   ├── profiles.yml                  # Credenciais MotherDuck
 │   └── models/
-│       └── mart_clientes.sql         # Model principal - transformações
+│       ├── stg_clientes.sql          # Staging: Limpeza clientes
+│       ├── stg_vendas.sql            # Staging: Limpeza vendas
+│       ├── mart_dashboard.sql        # Data Mart: Dashboard cliente
+│       └── mart_financeiro.sql       # Data Mart: Relatório financeiro
 │
-├── src/                              # Scripts Python
-│   ├── extract.py                    # Extração Google Sheets → CSV
-│   └── send_email.py                 # Análise IA + Distribuição
-│
-└── data/                             # Diretório de dados (gitignored)
-    └── raw_customers.csv             # Dados brutos extraídos
+└── src/                              # Scripts Python
+    ├── extract.py                    # Ingestão Google Sheets → MotherDuck
+    ├── send_email.py                 # Análise IA + Distribuição
+    └── notifications.py              # Alertas Telegram (opcional)
 ```
 
 ---
@@ -104,43 +112,64 @@ python src/extract.py && dbt run --project-dir dbt_project && python src/send_em
 
 ## 📊 Fluxo de Dados
 
-### Extract (extract.py)
-- Conecta ao Google Sheets via `read_csv(URL)`
-- Valida dados básicos
-- Salva em `data/raw_customers.csv`
-- Sem transformações (raw data)
+### 1. Extract (extract.py)
+- Conecta a Google Sheets (2 abas: Clientes + Vendas)
+- Autentica no MotherDuck com token
+- Cria banco `barbearia_db` (caso não exista)
+- Faz load das abas em tabelas raw:
+  - `raw_clientes`: ID, Nome, Data_Nascimento, Bairro, Cidade, Sexo
+  - `raw_vendas`: ID, ID_Cliente, Data_Venda, Tipo_Venda, Valor
+- Envia alertas Telegram (opcional)
 
-### Transform (DBT)
-- **Leitura**: `read_csv_auto()` do DuckDB
-- **Limpeza**: Padronização de nomes e datas
-- **Enriquecimento**: Cálculo de idade, faixa etária, aniversariantes
-- **Saída**: Tabela `mart_clientes` (view ou table)
+### 2. Transform (DBT)
+Executa em 2 camadas:
 
-### Load (send_email.py)
-- Consulta dados em DuckDB
-- Calcula métricas (total, média, faixa principal)
+**Staging (stg_*)**:
+- `stg_clientes`: Limpeza e tipagem (nomes em UPPER, datas parseadas)
+- `stg_vendas`: Limpeza de vendas (valores decimal, datas parseadas)
+
+**Marts (mart_*)**:
+- `mart_dashboard`: Join clientes + vendas, cálculo de LTV, frequência, recência
+- `mart_financeiro`: Agregado de faturamento, ticket médio, serviço mais vendido
+
+### 3. Load (send_email.py)
+- Consulta `mart_dashboard` e `mart_financeiro` no MotherDuck
+- Calcula métricas de aniversariantes do mês
 - Envia para OpenAI com contexto do cliente
-- Recebe insight e distribui por email
+- Distribui relatório por email
 
 ---
 
 ## 🗄️ Banco de Dados
 
-### DuckDB
-- **Tipo**: SQLite-like em memória/arquivo
-- **Vantagem**: Sem setup, suporta Parquet/CSV nativo
-- **Alternativas**: PostgreSQL, BigQuery, Snowflake (alterar `profiles.yml`)
+### MotherDuck
+- **Tipo**: Data warehouse serverless (DuckDB on cloud)
+- **Autenticação**: Token via `MOTHERDUCK_TOKEN`
+- **Vantagem**: Sem infraestrutura, escalável, grátis para pequenos volumes
+- **Conexão**: `duckdb.connect('md:?token=...')`
 
-### Modelo: mart_clientes
+### Tabelas Raw (Ingestão)
+```
+raw_clientes: ID, Nome, Data_Nascimento, Bairro, Cidade, Sexo
+raw_vendas:   ID, ID_Cliente, Data_Venda, Tipo_Venda, Valor
+```
 
-```sql
-cliente_id          (INTEGER)
-nome_cliente        (VARCHAR)
-data_nascimento_dt  (DATE)
-idade               (INTEGER)
-faixa_etaria        (VARCHAR)
-is_aniversariante_mes (BOOLEAN)
-data_ref_carga      (DATE)
+### Tabelas Staging (Transformação DBT)
+```
+stg_clientes: cliente_id, nome, data_nascimento, bairro, cidade, sexo
+stg_vendas:   venda_id, cliente_id, data_venda, servico, valor_faturamento
+```
+
+### Data Marts (Análise)
+```
+mart_dashboard:
+  - cliente_id, nome, bairro
+  - frequencia_visitas, total_gasto_ltv, ultima_visita
+  - dias_desde_ultima_visita, idade
+
+mart_financeiro:
+  - faturamento_total, ticket_medio
+  - servico_mais_vendido, total_vendas
 ```
 
 ---
@@ -178,64 +207,95 @@ YAGMAIL_PASSWORD=xxxx-xxxx-xxxx-xxxx
 
 ### Local (Desenvolvimento)
 ```bash
+# Sem CI/CD, rodar manual
+export MOTHERDUCK_TOKEN="seu-token"
+export OPENAI_API_KEY="sk-..."
+export TELEGRAM_TOKEN="..."
+export EMAIL_USER="..."
+export EMAIL_PASS="..."
+
 python src/extract.py && dbt run --project-dir dbt_project && python src/send_email.py
 ```
 
-### Automatizado (Cron)
-```bash
-# Executar todos os dias às 8:00 AM
-0 8 * * * cd /path/to/project && /usr/bin/python3 src/extract.py && dbt run --project-dir dbt_project && python3 src/send_email.py
-```
+### GitHub Actions (Produção)
+Configurado em `.github/workflows/daily_pipeline.yml`
 
-### Docker (Opcional)
-```dockerfile
-FROM python:3.10
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY . .
-CMD python src/extract.py && dbt run --project-dir dbt_project && python src/send_email.py
-```
+**Triggers**:
+- Manual: `workflow_dispatch` (rodar na aba Actions)
+- Automático: Diariamente às 11:00 UTC (`cron: '0 11 * * *'`)
+
+**Secrets Necessários**:
+- `MOTHERDUCK_TOKEN`: Token MotherDuck
+- `OPENAI_API_KEY`: Chave OpenAI
+- `EMAIL_USER`: Email para enviar relatórios
+- `EMAIL_PASS`: Senha app do Gmail
+- `TELEGRAM_TOKEN`: Token bot Telegram (opcional)
+- `TELEGRAM_CHAT_ID`: ID chat Telegram (opcional)
+
+**Etapas**:
+1. Checkout do código
+2. Setup Python 3.9
+3. Install dependências
+4. Extract (Python + MotherDuck)
+5. Transform (dbt run)
+6. Load & Notify (Email + Telegram)
 
 ---
 
 ## 🔐 Segurança & Boas Práticas
 
-- ✅ Não commite `CONFIG_CLIENTE.json` se contiver dados sensíveis
-- ✅ Use `.env` para variáveis de ambiente
-- ✅ Gitignore: `data/`, `.env`, `logs/`
-- ✅ Valide dados de entrada (CSV)
-- ✅ Rate limit da API OpenAI
+- ✅ Nunca commite `MOTHERDUCK_TOKEN`, `OPENAI_API_KEY`, credenciais de email
+- ✅ Use GitHub Secrets para credenciais em CI/CD
+- ✅ Use `.env` local para desenvolvimento (não commite)
+- ✅ Gitignore: `.env`, `data/`, `logs/`, `*.duckdb`
+- ✅ Valide dados de entrada (ID, datas, valores)
+- ✅ Implementar rate limit da API OpenAI
+- ✅ Logs sensíveis não devem conter tokens
 
 ---
 
 ## 🧪 Testes & Debugging
 
+### Testar Conexão MotherDuck
+```bash
+export MOTHERDUCK_TOKEN="seu-token"
+python -c "import duckdb; con = duckdb.connect('md:?token=$MOTHERDUCK_TOKEN'); print(con.sql('SELECT 1'))"
+```
+
 ### Testar Extração
 ```bash
-python -c "from src.extract import run_extraction; run_extraction()"
+export MOTHERDUCK_TOKEN="..."
+export TELEGRAM_TOKEN="..."
+export TELEGRAM_CHAT_ID="..."
+python src/extract.py
 ```
 
 ### Testar DBT
 ```bash
-dbt run --project-dir dbt_project --select mart_clientes
-dbt test --project-dir dbt_project
+cd dbt_project
+dbt debug --profiles-dir .
+dbt run --profiles-dir . --select stg_clientes
+dbt run --profiles-dir . --select mart_dashboard
 ```
 
-### Testar IA
-```python
-from src.send_email import get_ai_analysis
-metricas = {"total": 100, "idade_media": 35, "faixa_principal": "Adulto", "aniversariantes": 5}
-print(get_ai_analysis(metricas))
+### Testar Pipeline Completa
+```bash
+export MOTHERDUCK_TOKEN="..."
+export OPENAI_API_KEY="sk-..."
+export EMAIL_USER="..."
+export EMAIL_PASS="..."
+python src/extract.py && cd dbt_project && dbt run --profiles-dir . && cd .. && python src/send_email.py
 ```
 
 ---
 
 ## 📚 Referências
 
+- [MotherDuck Docs](https://motherduck.com/docs/)
 - [DBT Docs](https://docs.getdbt.com/)
 - [DuckDB Docs](https://duckdb.org/docs/)
 - [OpenAI API](https://platform.openai.com/docs/)
+- [GitHub Actions](https://docs.github.com/en/actions)
 - [Yagmail](https://github.com/kootenpush/yagmail)
 
 ---

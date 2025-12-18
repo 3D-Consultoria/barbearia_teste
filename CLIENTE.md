@@ -27,18 +27,30 @@ Este arquivo documenta informações específicas de cada cliente, regras de neg
 ## 📊 Dados do Cliente
 
 ### Fonte de Dados
-- **Tipo**: Google Sheets (planilha compartilhada)
+- **Tipo**: Google Sheets (múltiplas abas - Clientes e Vendas)
 - **ID da Planilha**: `1f655JLEQiOxSB0uKFRv9Ds9-00rAVNP2qTfeXRbSgq4`
-- **Estrutura mínima obrigatória**:
+- **Database**: MotherDuck (serverless DuckDB)
+
+### Estrutura - Aba Clientes (gid=0)
 
 | Coluna | Tipo | Descrição | Exemplo |
 |--------|------|-----------|---------|
 | ID | Número | Identificador único | 1, 2, 3 |
 | Nome | Texto | Nome completo do cliente | João Silva |
-| Nascimento | Data | Data de nascimento (DD/MM/YYYY) | 15/03/1990 |
+| Data_Nascimento | Data | Data de nascimento (DD/MM/YYYY) | 15/03/1990 |
+| Bairro | Texto | Bairro do cliente | Centro |
+| Cidade | Texto | Cidade | São Paulo |
+| Sexo | Texto | Sexo (M/F) | M |
 
-### Colunas Adicionais (Opcional)
-Se a planilha contiver mais colunas, elas serão ignoradas. Para usá-las, modifique o SQL em `mart_clientes.sql`.
+### Estrutura - Aba Vendas (gid=48884415)
+
+| Coluna | Tipo | Descrição | Exemplo |
+|--------|------|-----------|---------|
+| ID | Número | ID da venda | 1, 2, 3 |
+| ID_Cliente | Número | Referência ao cliente | 1 |
+| Data_Venda | Data | Data da venda (DD/MM/YYYY) | 15/12/2025 |
+| Tipo_Venda | Texto | Tipo de serviço | Corte Clássico |
+| Valor | Decimal | Valor da venda | 50.00 |
 
 ---
 
@@ -96,42 +108,58 @@ Senior (40+)            → Serviços premium, conforto
 
 ---
 
-### Passo 3: Atualizar ID da Planilha
+### Passo 3: Atualizar IDs das Planilhas
 
 No arquivo `src/extract.py`, procure:
 
 ```python
 SHEET_ID = "1f655JLEQiOxSB0uKFRv9Ds9-00rAVNP2qTfeXRbSgq4"
+
+# Aba Clientes (Geralmente gid=0 se for a primeira)
+URL_CLIENTES = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
+
+# Aba Vendas (Pegue o número do GID na URL: #gid=987654321)
+GID_VENDAS = "48884415" 
+URL_VENDAS = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_VENDAS}"
 ```
 
 Substitua pelo novo:
 
 ```python
-SHEET_ID = "seu-novo-id-aqui"
+SHEET_ID = "novo-sheet-id-aqui"
+URL_CLIENTES = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
+GID_VENDAS = "novo-gid-vendas" 
+URL_VENDAS = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_VENDAS}"
 ```
 
 ---
 
 ### Passo 4: Validar Modelo DBT (Se Necessário)
 
-Se o novo cliente tiver **estrutura de dados diferente**, modifique `dbt_project/models/mart_clientes.sql`:
+Se o novo cliente tiver **estrutura de dados diferente**, modifique `dbt_project/models/stg_clientes.sql` e `dbt_project/models/stg_vendas.sql`:
 
-#### Exemplo: Cliente com coluna diferente
+#### Exemplo: Colunas diferentes em stg_clientes.sql
 ```sql
 -- ANTES (padrão):
-TRIM(INITCAP(COALESCE(Nome, 'Cliente Desconhecido'))) as nome_cliente
+SELECT
+    TRY_CAST(id AS INTEGER) as cliente_id,
+    UPPER(TRIM(nome)) as nome,
+    try_strptime(data_nascimento, '%d/%m/%Y')::DATE as data_nascimento,
+    UPPER(TRIM(bairro)) as bairro
+FROM raw_clientes
 
--- DEPOIS (se a coluna chama "Client_Name"):
-TRIM(INITCAP(COALESCE(Client_Name, 'Cliente Desconhecido'))) as nome_cliente
+-- DEPOIS (se coluna chama "Nome_Cliente"):
+SELECT
+    TRY_CAST(id AS INTEGER) as cliente_id,
+    UPPER(TRIM(Nome_Cliente)) as nome,
+    try_strptime(Data_Nasc, '%d/%m/%Y')::DATE as data_nascimento,
+    UPPER(TRIM(bairro)) as bairro
+FROM raw_clientes
 ```
 
-#### Exemplo: Formato de data diferente
-```sql
--- ANTES (DD/MM/YYYY):
-TRY_CAST(strptime(Nascimento, '%d/%m/%Y') AS DATE)
-
--- DEPOIS (YYYY-MM-DD):
-TRY_CAST(strptime(Nascimento, '%Y-%m-%d') AS DATE)
+#### Validar Staging após mudanças
+```bash
+dbt run --project-dir dbt_project --select stg_clientes,stg_vendas
 ```
 
 ---
@@ -139,13 +167,21 @@ TRY_CAST(strptime(Nascimento, '%Y-%m-%d') AS DATE)
 ### Passo 5: Rodar Pipeline
 
 ```bash
+# Configurar variáveis
+export MOTHERDUCK_TOKEN="seu-token"
+export OPENAI_API_KEY="sk-..."
+export EMAIL_USER="seu-email@gmail.com"
+export EMAIL_PASS="senha-app"
+
 # 1. Extrair
 python src/extract.py
 
-# 2. Transformar
-dbt run --project-dir dbt_project
+# 2. Transformar (DBT)
+cd dbt_project
+dbt run --profiles-dir .
+cd ..
 
-# 3. Enviar
+# 3. Enviar relatório
 python src/send_email.py
 ```
 
@@ -186,15 +222,19 @@ REGRA:
 ## 📋 Checklist: Migração para Novo Cliente
 
 - [ ] Atualizar `CONFIG_CLIENTE.json`
-- [ ] Criar planilha Google Sheets com dados
-- [ ] Copiar ID da planilha
-- [ ] Atualizar `SHEET_ID` em `extract.py`
-- [ ] Validar estrutura de dados (executar `python src/extract.py`)
-- [ ] Ajustar SQL em `mart_clientes.sql` se colunas forem diferentes
-- [ ] Testar DBT: `dbt run --project-dir dbt_project`
-- [ ] Customizar prompt da IA (opcional)
-- [ ] Executar pipeline completo
-- [ ] Validar email recebido
+- [ ] Criar planilha Google Sheets com 2 abas (Clientes + Vendas)
+- [ ] Preencher abas com estrutura correta (ID, Nome, Data_Nascimento, etc.)
+- [ ] Copiar SHEET_ID da URL
+- [ ] Encontrar GID de cada aba (Clientes=0, Vendas=XXXX)
+- [ ] Atualizar `SHEET_ID` e `GID_VENDAS` em `extract.py`
+- [ ] Testar extração: `python src/extract.py`
+- [ ] Ajustar SQL em `stg_clientes.sql` e `stg_vendas.sql` se colunas forem diferentes
+- [ ] Testar DBT: `cd dbt_project && dbt run --profiles-dir .`
+- [ ] Customizar prompt da IA em `send_email.py` (opcional)
+- [ ] Executar pipeline completa
+- [ ] Validar email recebido com relatório
+- [ ] Configurar secrets no GitHub Actions (se usar CI/CD)
+- [ ] Agendar pipeline automática em GitHub Actions
 
 ---
 
@@ -221,16 +261,22 @@ git push origin cliente/nova-clinica
 ## 🆘 Troubleshooting
 
 ### Erro: "Coluna não encontrada"
-- Verifique se os nomes em `mart_clientes.sql` correspondem ao CSV
-- Execute: `head -1 data/raw_customers.csv` para ver nomes reais
+- Verifique se os nomes em `stg_clientes.sql` e `stg_vendas.sql` correspondem ao CSV do Google Sheets
+- Execute e verifique se `raw_clientes` e `raw_vendas` foram criadas corretamente
+- Dica: Veja os nomes exatos digitando na Query: `SELECT * FROM raw_clientes LIMIT 1`
 
 ### Erro: "Data inválida"
-- Valide o formato esperado em `strptime()`
-- Execute: `dbt test --project-dir dbt_project`
+- Valide o formato esperado em `try_strptime()`
+- Comum: DD/MM/YYYY vs YYYY-MM-DD
+- Execute: `dbt run --project-dir dbt_project --profiles-dir . --select stg_clientes`
 
-### Erro: "Nenhum cliente para analisar"
-- Verifique se a planilha tem dados
-- Confirm que as 3 colunas obrigatórias existem
+### Erro: "Token MotherDuck inválido"
+- Confirme que `MOTHERDUCK_TOKEN` está configurado corretamente
+- Regenere o token em https://motherduck.com/
+
+### Erro: "Nenhum cliente/venda para analisar"
+- Verifique se as abas tem dados no Google Sheets
+- Confirme que GID (gid=0 para clientes, gid=XXXX para vendas) estão corretos
 
 ---
 
